@@ -29,7 +29,7 @@ using std::endl;
 #include <vector>
 #include <cmath>
 
-#include "hpgmp.hpp"
+#include "Hpgmp_Params.hpp"
 
 #include "ComputeSPMV.hpp"
 #include "ComputeMG.hpp"

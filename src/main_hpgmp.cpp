@@ -35,7 +35,7 @@ using std::endl;
 
 #include <vector>
 
-#include "hpgmp.hpp"
+#include "Hpgmp_Params.hpp"
 
 #include "SetupProblem.hpp"
 #include "CheckAspectRatio.hpp"
@@ -58,8 +58,6 @@ using std::endl;
 
 #include "GMRES.hpp"
 #include "TestGMRES.hpp"
-#include "GenerateNonsymProblem.hpp"
-#include "GenerateNonsymCoarseProblem.hpp"
 
 typedef double scalar_type;
 typedef Vector<scalar_type> Vector_type;
@@ -91,15 +89,82 @@ int main(int argc, char * argv[]) {
   MPI_Init(&argc, &argv);
 #endif
 
+  //Initialize params for full-scale benchmark run:
   HPCG_Params params;
-
   HPCG_Init(&argc, &argv, params);
+  int size = params.comm_size; // Num MPI processes
+  int rank = params.comm_rank; // My process ID
+
+// **************************************************************************8
+// PHASE I: VERIFY CONVERGENCE WITH SMALL PROBLEM
+// **************************************************************************8
+
+  MPI_Comm SM_COMM;
+  MPI_Group group_world;
+  MPI_Group sm_group;
+  if( size <= 64 ) //Use all MPI ranks
+    SM_COMM = MPI_COMM_WORLD;
+  else{
+    // Get MPI Sub-communicator:
+    int num_ranks = 64;
+    int *process_ranks;
+    // make a list of processes in the new communicator
+    process_ranks = (int*) malloc(num_ranks*sizeof(int));
+    for(int i = 0; i < num_ranks; i++)
+      process_ranks[i] = i;
+    //get the group under MPI_COMM_WORLD
+    MPI_Comm_group(MPI_COMM_WORLD, &group_world);
+    // create the new group
+    MPI_Group_incl(group_world, num_ranks, process_ranks, &sm_group);
+    // create the new communicator
+    MPI_Comm_create(MPI_COMM_WORLD, sm_group, &SM_COMM);
+  }
+
+  HPCG_Params sm_params;
+  sm_params.nx = 32;
+  sm_params.ny = 32;
+  sm_params.nz = 32;
+
+  sm_params.runningTime = 0.0005; //Something really small since we just want one run??
+  sm_params.pz = 0;
+  sm_params.zl = 0;
+  sm_params.zu = 0;
+
+  sm_params.npx = 0;
+  sm_params.npy = 0;
+  sm_params.npz = 0;
+
+#ifndef HPCG_NO_MPI
+  MPI_Comm_rank( SM_COMM, &sm_params.comm_rank );
+  MPI_Comm_size( SM_COMM, &sm_params.comm_size );
+#else
+  sm_params.comm_rank = 0;
+  sm_params.comm_size = 1;
+#endif
+
+#ifdef HPCG_NO_OPENMP
+  sm_params.numThreads = 1;
+#else
+  #pragma omp parallel
+  sm_params.numThreads = omp_get_num_threads();
+#endif
+
+  // Construct the geometry and linear system
+  local_int_t nx,ny,nz;
+  sm_nx = (local_int_t)sm_params.nx;
+  sm_ny = (local_int_t)sm_params.ny;
+  sm_nz = (local_int_t)sm_params.nz;
+  Geometry * sm_geom = new Geometry;
+  GenerateGeometry(sm_params.comm_size, sm_params.comm_rank, sm_params.numThreads, sm_params.pz, 
+      sm_params.zl, sm_params.zu, sm_nx, sm_ny, sm_nz, sm_params.npx, sm_params.npy, sm_params.npz, sm_geom);
+
+// **************************************************************************8
+// PHASE II: BENCHMARKING PHASE
+// **************************************************************************8
 
   // Check if QuickPath option is enabled.
   // If the running time is set to zero, we minimize all paths through the program
   bool quickPath = 1; //TODO: Change back to the following after=(params.runningTime==0);
-
-  int size = params.comm_size, rank = params.comm_rank; // Number of MPI processes, My process ID
 
 #ifdef HPCG_DETAILED_DEBUG
   if (size < 100 && rank==0) HPCG_fout << "Process "<<rank<<" of "<<size<<" is alive with " << params.numThreads << " threads." <<endl;
@@ -161,39 +226,16 @@ int main(int argc, char * argv[]) {
   //TODO: This is the spot where HPCG runs check problem.  Do we need CheckProblem?
   //Probably need to check multigird (and Traingular solve?) here. 
 
+  // Call user-tunable set up function.
+  double t7 = mytimer();
+  OptimizeProblem(A, data, b, x, xexact);
+  t7 = mytimer() - t7;
+  times[7] = t7;
 
-  ////////////////////////////////////
-  // Reference SpMV+MG Timing Phase //
-  ////////////////////////////////////
-
-  // Call Reference SpMV and MG. Compute Optimization time as ratio of times in these routines
-
-  local_int_t nrow = A.localNumberOfRows;
-  local_int_t ncol = A.localNumberOfColumns;
-
-  Vector_type x_overlap, b_computed;
-  InitializeVector(x_overlap, ncol); // Overlapped copy of x vector
-  InitializeVector(b_computed, nrow); // Computed RHS vector
-
-
-  // Record execution time of reference SpMV and MG kernels for reporting times
-  // First load vector with random values
-  FillRandomVector(x_overlap);
-
-  int numberOfCalls = 10;
-  if (quickPath) numberOfCalls = 1; //QuickPath means we do on one call of each block of repetitive code
-  double t_begin = mytimer();
-  for (int i=0; i< numberOfCalls; ++i) {
-    ierr = ComputeSPMV_ref(A, x_overlap, b_computed); // b_computed = A*x_overlap
-    if (ierr) HPCG_fout << "Error in call to SpMV: " << ierr << ".\n" << endl;
-    ierr = ComputeMG_ref(A, b_computed, x_overlap); // b_computed = Minv*y_overlap
-    if (ierr) HPCG_fout << "Error in call to MG: " << ierr << ".\n" << endl;
+  if (A.geom->rank==0) {
+    HPCG_fout << " Setup    Time     " << setup_time << " seconds." << endl;
+    HPCG_fout << " Optimize Time     " << t7 << " seconds." << endl;
   }
-  times[8] = (mytimer() - t_begin)/((double) numberOfCalls);  // Total time divided by number of calls.
-#ifdef HPCG_DEBUG
-  if (rank==0) HPCG_fout << "Total SpMV+MG timing phase execution time in main (sec) = " << mytimer() - t1 << endl;
-#endif
-
 
   ///////////////////////////////
   // Reference GMRES Timing Phase //
@@ -210,23 +252,21 @@ int main(int argc, char * argv[]) {
   scalar_type normr0 = 0.0;
   int restart_length = 50;
   int refMaxIters = 50;
-  numberOfCalls = 1; // Only need to run the residual reduction analysis once
 
   // Compute the residual reduction for the natural ordering and reference kernels
+  double flops = 0.0;
   std::vector< double > ref_times(9,0.0);
   scalar_type tolerance = 0.0; // Set tolerance to zero to make all runs do maxIters iterations
   int err_count = 0;
-  for (int i=0; i< numberOfCalls; ++i) {
-    ZeroVector(x);
-    ierr = GMRES(A, data, b, x, restart_length, refMaxIters, tolerance, niters, normr, normr0, &ref_times[0], true);
-    if (ierr) ++err_count; // count the number of errors in GMRES.
-    totalNiters_ref += niters;
-  }
+  ZeroVector(x);
+  ierr = GMRES(A, data, b, x, restart_length, refMaxIters, tolerance, niters, normr, normr0, &ref_times[0], &flops, true);
+  if (ierr) ++err_count; // count the number of errors in GMRES.
+  totalNiters_ref += niters;
   if (rank == 0 && err_count) HPCG_fout << err_count << " error(s) in call(s) to reference GMRES." << endl;
   scalar_type refTolerance = normr / normr0;
 
   // Call user-tunable set up function.
-  double t7 = mytimer();
+  t7 = mytimer();
   OptimizeProblem(A, data, b, x, xexact);
   t7 = mytimer() - t7;
   times[7] = t7;
@@ -248,6 +288,7 @@ int main(int argc, char * argv[]) {
 /*
 #ifdef HPCG_DEBUG
   t1 = mytimer();
+  if (rank==0) HPCG_fout << endl << "Running Uniform-precision Test" << endl;
 #endif
   testcg_data.count_pass = testcg_data.count_fail = 0;
   TestGMRES(A, data, b, x, testcg_data);
@@ -272,12 +313,24 @@ int main(int argc, char * argv[]) {
   SparseMatrix_type2 A2;
   CGData_type2 data2;
   SetupProblem(numberOfMgLevels, A2, geom, data2, &b, &x, &xexact, init_vect);
-  testcg_data.count_pass = testcg_data.count_fail = 0;
+  setup_time = mytimer() - setup_time; // Capture total time of setup
 
+  t7 = mytimer();
+  OptimizeProblem(A2, data, b, x, xexact);
+  t7 = mytimer() - t7;
+
+  testcg_data.count_pass = testcg_data.count_fail = 0;
+  if (A.geom->rank==0) {
+    HPCG_fout << " Setup    Time     " << setup_time << " seconds." << endl;
+    HPCG_fout << " Optimize Time     " << t7 << " seconds." << endl;
+  }
+
+  bool test_diagonal_exaggeration = true;
+  bool test_noprecond = true;
 #ifdef HPCG_DEBUG
   t1 = mytimer();
 #endif
-  TestGMRES(A, A2, data, data2, b, x, testcg_data);
+  TestGMRES(A, A2, data, data2, b, x, testcg_data, test_diagonal_exaggeration, test_noprecond);
 #ifdef HPCG_DEBUG
   if (rank==0) HPCG_fout << "Total validation (mixed-precision TestGMRES) execution time in main (sec) = " << mytimer() - t1 << endl;
 #endif
@@ -309,8 +362,6 @@ int main(int argc, char * argv[]) {
   DeleteVector(x);
   DeleteVector(b);
   DeleteVector(xexact);
-  DeleteVector(x_overlap);
-  DeleteVector(b_computed);
   //delete [] testnorms_data.values;
 
   // Finish up

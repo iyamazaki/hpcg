@@ -31,7 +31,7 @@
 #ifdef HPCG_DETAILED_DEBUG
 #include <fstream>
 using std::endl;
-#include "hpgmp.hpp"
+#include "Hpgmp_Params.hpp"
 #include <cassert>
 #endif
 

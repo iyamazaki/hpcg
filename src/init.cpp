@@ -34,7 +34,7 @@ const char* NULLDEVICE="/dev/null";
 #include <fstream>
 #include <iostream>
 
-#include "hpgmp.hpp"
+#include "Hpgmp_Params.hpp"
 
 #include "ReadHpcgDat.hpp"
 
@@ -79,11 +79,13 @@ HPCG_Init(int * argc_p, char ** *argv_p, HPCG_Params & params) {
   iparams = (int *)malloc(sizeof(int) * nparams);
 
   // Initialize iparams
-  for (i = 0; i < nparams; ++i) iparams[i] = 0;
+  for (i = 0; i < nparams; ++i) 
+    iparams[i] = 0;
 
   /* for sequential and some MPI implementations it's OK to read first three args */
   for (i = 0; i < nparams; ++i)
-    if (argc <= i+1 || sscanf(argv[i+1], "%d", iparams+i) != 1 || iparams[i] < 10) iparams[i] = 0;
+    if (argc <= i+1 || sscanf(argv[i+1], "%d", iparams+i) != 1 || iparams[i] < 10) 
+      iparams[i] = 0;
 
   /* for some MPI environments, command line arguments may get complicated so we need a prefix */
   for (i = 1; i <= argc && argv[i]; ++i)
@@ -94,8 +96,10 @@ HPCG_Init(int * argc_p, char ** *argv_p, HPCG_Params & params) {
 
   // Check if --rt was specified on the command line
   int * rt  = iparams+3;  // Assume runtime was not specified and will be read from the hpcg.dat file
-  if (iparams[3]) rt = 0; // If --rt was specified, we already have the runtime, so don't read it from file
+  if (iparams[3]) 
+    rt = 0; // If --rt was specified, we already have the runtime, so don't read it from file
   if (! iparams[0] && ! iparams[1] && ! iparams[2]) { /* no geometry arguments on the command line */
+    //TODO: If I am rank 0, then read the file. 
     ReadHpcgDat(iparams, rt, iparams+7);
     broadcastParams = true;
   }

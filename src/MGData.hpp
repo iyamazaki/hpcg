@@ -25,6 +25,11 @@
 #include "SparseMatrix.hpp"
 #include "Vector.hpp"
 
+#ifdef HPCG_WITH_CUDA
+#include <cuda_runtime.h>
+#include <cusparse.h>
+#endif
+
 template<class SC>
 class MGData {
 public:
@@ -40,6 +45,13 @@ public:
    used inside optimized ComputeSPMV().
    */
   void * optimizationData;
+  #ifdef HPCG_WITH_CUDA
+  // to store the restrictiion as CRS matrix on device
+  cusparseMatDescr_t descrA;
+  int *d_row_ptr;
+  int *d_col_idx;
+  SC  *d_nzvals;   //!< values of matrix entries
+  #endif
 };
 
 /*!

@@ -12,19 +12,12 @@
 // ***************************************************
 //@HEADER
 
-#include <fstream>
+#ifndef COMPUTESYMGS_REF_HPP
+#define COMPUTESYMGS_REF_HPP
+#include "SparseMatrix.hpp"
+#include "Vector.hpp"
 
-#include "Hpgmp_Params.hpp"
+template<class SparseMatrix_type, class Vector_type>
+int ComputeSYMGS_ref(const SparseMatrix_type & A, const Vector_type & r, Vector_type & x);
 
-/*!
-  Closes the I/O stream used for logging information throughout the HPCG run.
-
-  @return returns 0 upon success and non-zero otherwise
-
-  @see HPCG_Init
-*/
-int
-HPCG_Finalize(void) {
-  HPCG_fout.close();
-  return 0;
-}
+#endif // COMPUTESYMGS_REF_HPP

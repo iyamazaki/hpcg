@@ -48,10 +48,75 @@ int ComputeRestriction_ref(const SparseMatrix_type & A, const Vector_type & rf) 
   local_int_t * f2c = A.mgData->f2cOperator;
   local_int_t nc = A.mgData->rc->localLength;
 
-#ifndef HPCG_NO_OPENMP
-#pragma omp parallel for
-#endif
-  for (local_int_t i=0; i<nc; ++i) rcv[i] = rfv[f2c[i]] - Axfv[f2c[i]];
+  #ifdef HPCG_WITH_CUDA
+   local_int_t n = rf.localLength;
+   scalar_type * d_Axfv = A.mgData->Axf->d_values;
+   scalar_type * d_rfv  = rf.d_values;
+   scalar_type * d_rcv  = A.mgData->rc->d_values;
+   #if 1
+   const scalar_type zero ( 0.0);
+   const scalar_type  one ( 1.0);
+   const scalar_type mone (-1.0);
+   if (std::is_same<scalar_type, double>::value) {
+     if (CUSPARSE_STATUS_SUCCESS != cusparseDcsrmv(A.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                   nc, n, nc,
+                                                   (const double*)&one,  A.mgData->descrA,
+                                                                         (double*)A.mgData->d_nzvals, A.mgData->d_row_ptr, A.mgData->d_col_idx,
+                                                                         (double*)d_rfv,
+                                                   (const double*)&zero, (double*)d_rcv)) {
+       printf( " Failed cusparseDcsrmv\n" );
+     }
+     if (CUSPARSE_STATUS_SUCCESS != cusparseDcsrmv(A.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                   nc, n, nc,
+                                                   (const double*)&mone, A.mgData->descrA,
+                                                                         (double*)A.mgData->d_nzvals, A.mgData->d_row_ptr, A.mgData->d_col_idx,
+                                                                         (double*)d_Axfv,
+                                                   (const double*)&one,  (double*)d_rcv)) {
+       printf( " Failed cusparseDcsrmv\n" );
+     }
+   } else if (std::is_same<scalar_type, float>::value) {
+     if (CUSPARSE_STATUS_SUCCESS != cusparseScsrmv(A.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                   nc, n, nc,
+                                                   (const float*)&one,  A.mgData->descrA,
+                                                                        (float*)A.mgData->d_nzvals, A.mgData->d_row_ptr, A.mgData->d_col_idx,
+                                                                        (float*)d_rfv,
+                                                   (const float*)&zero, (float*)d_rcv)) {
+       printf( " Failed cusparseScsrmv\n" );
+     }
+     if (CUSPARSE_STATUS_SUCCESS != cusparseScsrmv(A.cusparseHandle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                                   nc, n, nc,
+                                                   (const float*)&mone, A.mgData->descrA,
+                                                                        (float*)A.mgData->d_nzvals, A.mgData->d_row_ptr, A.mgData->d_col_idx,
+                                                                        (float*)d_Axfv,
+                                                   (const float*)&one,  (float*)d_rcv)) {
+       printf( " Failed cusparseScsrmv\n" );
+     }
+   }
+   #else
+   // Copy the whole prologated vector from Device to Host
+   if (cudaSuccess != cudaMemcpy(rfv, d_rfv, n*sizeof(scalar_type), cudaMemcpyDeviceToHost)) {
+     printf( " Failed to memcpy d_rfv\n" );
+   }
+   if (cudaSuccess != cudaMemcpy(Axfv, d_Axfv, n*sizeof(scalar_type), cudaMemcpyDeviceToHost)) {
+     printf( " Failed to memcpy d_Axfv\n" );
+   }
+
+   // Restriction on CPU 
+   if (A.geom->rank==0) printf( " Restriction on CPU\n" );
+   for (local_int_t i=0; i<nc; ++i) rcv[i] = rfv[f2c[i]] - Axfv[f2c[i]];
+
+   // Copy the whole restricted vector from Host to Device
+   if (cudaSuccess != cudaMemcpy(d_rcv, rcv, nc*sizeof(scalar_type), cudaMemcpyHostToDevice)) {
+     printf( " Failed to memcpy d_x\n" );
+   }
+   #endif
+  #else
+   // host
+   #ifndef HPCG_NO_OPENMP
+   #pragma omp parallel for
+   #endif
+   for (local_int_t i=0; i<nc; ++i) rcv[i] = rfv[f2c[i]] - Axfv[f2c[i]];
+  #endif
 
   return 0;
 }

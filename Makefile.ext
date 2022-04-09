@@ -27,6 +27,8 @@ HPCG_DEPS = src/ComputeResidual.o \
 	    src/ComputeOptimalShapeXYZ.o \
 	    src/ComputeSPMV.o \
 	    src/ComputeSPMV_ref.o \
+	    src/ComputeSYMGS.o \
+	    src/ComputeSYMGS_ref.o \
 	    src/ComputeWAXPBY.o \
 	    src/ComputeWAXPBY_ref.o \
 	    src/ComputeMG_ref.o \
@@ -45,26 +47,35 @@ HPCG_DEPS = src/ComputeResidual.o \
 	    src/ComputeGS_Forward_ref.o \
 	    src/ComputeTRSM.o \
 	    src/ComputeGEMV.o \
-			src/SetupProblem.o \
+	    src/ComputeGEMV_ref.o \
+	    src/ComputeGEMVT.o \
+	    src/ComputeGEMVT_ref.o \
+	    src/SetupProblem.o \
 	    src/GenerateNonsymProblem.o \
 	    src/GenerateNonsymProblem_v1_ref.o \
 	    src/GenerateNonsymCoarseProblem.o \
 
 # These header files are included in many source files, so we recompile every file if one or more of these header is modified.
-PRIMARY_HEADERS = HPCG_SRC_PATH/src/Geometry.hpp HPCG_SRC_PATH/src/SparseMatrix.hpp HPCG_SRC_PATH/src/Vector.hpp HPCG_SRC_PATH/src/CGData.hpp \
-                  HPCG_SRC_PATH/src/MGData.hpp HPCG_SRC_PATH/src/hpcg.hpp
+PRIMARY_HEADERS = HPCG_SRC_PATH/src/Geometry.hpp HPCG_SRC_PATH/src/SparseMatrix.hpp HPCG_SRC_PATH/src/Vector.hpp HPCG_SRC_PATH/src/MultiVector.hpp \
+                  HPCG_SRC_PATH/src/CGData.hpp HPCG_SRC_PATH/src/MGData.hpp HPCG_SRC_PATH/src/Hpgmp_Params.hpp
 
-all: bin/xhpgmp
+all: bin/xhpgmp bin/xhpgmp_time
 
 bin/xhpgmp: src/main_hpgmp.o $(HPCG_DEPS)
 	$(LINKER) $(LINKFLAGS) src/main_hpgmp.o $(HPCG_DEPS) $(HPCG_LIBS) -o bin/xhpgmp
 
+bin/xhpgmp_time: src/main_time.o $(HPCG_DEPS)
+	$(LINKER) $(LINKFLAGS) src/main_time.o $(HPCG_DEPS) $(HPCG_LIBS) -o bin/xhpgmp_time
+
 clean:
-	rm -f src/*.o bin/xhpgmp
+	rm -f src/*.o bin/xhpgmp bin/xhpgmp_time
 
 .PHONY: all clean
 
 src/main_hpgmp.o: HPCG_SRC_PATH/src/main_hpgmp.cpp $(PRIMARY_HEADERS)
+	$(CXX) -c $(CXXFLAGS) -IHPCG_SRC_PATH/src $< -o $@
+
+src/main_time.o: HPCG_SRC_PATH/src/main_time.cpp $(PRIMARY_HEADERS)
 	$(CXX) -c $(CXXFLAGS) -IHPCG_SRC_PATH/src $< -o $@
 
 src/ComputeResidual.o: HPCG_SRC_PATH/src/ComputeResidual.cpp HPCG_SRC_PATH/src/ComputeResidual.hpp $(PRIMARY_HEADERS)
@@ -139,6 +150,9 @@ src/ComputeSPMV_ref.o: HPCG_SRC_PATH/src/ComputeSPMV_ref.cpp HPCG_SRC_PATH/src/C
 src/ComputeSYMGS.o: HPCG_SRC_PATH/src/ComputeSYMGS.cpp HPCG_SRC_PATH/src/ComputeSYMGS.hpp $(PRIMARY_HEADERS)
 	$(CXX) -c $(CXXFLAGS) -IHPCG_SRC_PATH/src $< -o $@
 
+src/ComputeSYMGS_ref.o: HPCG_SRC_PATH/src/ComputeSYMGS_ref.cpp HPCG_SRC_PATH/src/ComputeSYMGS_ref.hpp $(PRIMARY_HEADERS)
+	$(CXX) -c $(CXXFLAGS) -IHPCG_SRC_PATH/src $< -o $@
+
 src/ComputeWAXPBY.o: HPCG_SRC_PATH/src/ComputeWAXPBY.cpp HPCG_SRC_PATH/src/ComputeWAXPBY.hpp $(PRIMARY_HEADERS)
 	$(CXX) -c $(CXXFLAGS) -IHPCG_SRC_PATH/src $< -o $@
 
@@ -183,6 +197,15 @@ src/ComputeTRSM.o: HPCG_SRC_PATH/src/ComputeTRSM.cpp HPCG_SRC_PATH/src/ComputeTR
 	$(CXX) -c $(CXXFLAGS) -IHPCG_SRC_PATH/src $< -o $@
 
 src/ComputeGEMV.o: HPCG_SRC_PATH/src/ComputeGEMV.cpp HPCG_SRC_PATH/src/ComputeGEMV.hpp $(PRIMARY_HEADERS)
+	$(CXX) -c $(CXXFLAGS) -IHPCG_SRC_PATH/src $< -o $@
+
+src/ComputeGEMV_ref.o: HPCG_SRC_PATH/src/ComputeGEMV_ref.cpp HPCG_SRC_PATH/src/ComputeGEMV_ref.hpp $(PRIMARY_HEADERS)
+	$(CXX) -c $(CXXFLAGS) -IHPCG_SRC_PATH/src $< -o $@
+
+src/ComputeGEMVT.o: HPCG_SRC_PATH/src/ComputeGEMVT.cpp HPCG_SRC_PATH/src/ComputeGEMVT.hpp $(PRIMARY_HEADERS)
+	$(CXX) -c $(CXXFLAGS) -IHPCG_SRC_PATH/src $< -o $@
+
+src/ComputeGEMVT_ref.o: HPCG_SRC_PATH/src/ComputeGEMVT_ref.cpp HPCG_SRC_PATH/src/ComputeGEMVT_ref.hpp $(PRIMARY_HEADERS)
 	$(CXX) -c $(CXXFLAGS) -IHPCG_SRC_PATH/src $< -o $@
 
 src/SetupProblem.o: HPCG_SRC_PATH/src/SetupProblem.cpp HPCG_SRC_PATH/src/SetupProblem.hpp $(PRIMARY_HEADERS)

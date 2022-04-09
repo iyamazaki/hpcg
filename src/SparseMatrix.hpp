@@ -36,6 +36,11 @@ typedef std::map< global_int_t, local_int_t > GlobalToLocalMap;
 using GlobalToLocalMap = std::unordered_map< global_int_t, local_int_t >;
 #endif
 
+#ifdef HPCG_WITH_CUDA
+#include <cuda_runtime.h>
+#include <cusparse.h>
+#endif
+
 template <class SC = double>
 class SparseMatrix {
 public:
@@ -44,9 +49,11 @@ public:
   Geometry * geom; //!< geometry associated with this matrix
   global_int_t totalNumberOfRows; //!< total number of matrix rows across all processes
   global_int_t totalNumberOfNonzeros; //!< total number of matrix nonzeros across all processes
+  global_int_t totalNumberOfMGNonzeros; //!< total number of matrix nonzeros across all processes, for MG
   local_int_t localNumberOfRows; //!< number of rows local to this process
   local_int_t localNumberOfColumns;  //!< number of columns local to this process
   local_int_t localNumberOfNonzeros;  //!< number of nonzeros local to this process
+  local_int_t localNumberOfMGNonzeros;  //!< number of nonzeros local to this process, for MG
   char  * nonzerosInRow;  //!< The number of nonzeros in a row will always be 27 or fewer
   global_int_t ** mtxIndG; //!< matrix indices as global values
   local_int_t ** mtxIndL; //!< matrix indices as local values
@@ -58,6 +65,7 @@ public:
   mutable bool isSpmvOptimized;
   mutable bool isMgOptimized;
   mutable bool isWaxpbyOptimized;
+  mutable bool isGemvOptimized;
   /*!
    This is for storing optimized data structres created in OptimizeProblem and
    used inside optimized ComputeSPMV().
@@ -76,6 +84,39 @@ public:
   local_int_t * sendLength; //!< lenghts of messages sent to neighboring processes
   SC * sendBuffer; //!< send buffer for non-blocking sends
 #endif
+#if defined(HPCG_WITH_CUDA) | defined(HPCG_WITH_HIP)
+  #if defined(HPCG_WITH_CUDA)
+  cusparseHandle_t cusparseHandle;
+  cusparseMatDescr_t descrA;
+  #endif
+
+  // to store the local matrix on device
+  int *d_row_ptr;
+  int *d_col_idx;
+  SC  *d_nzvals;   //!< values of matrix entries
+
+  // to store the lower-triangular matrix on device
+  local_int_t nnzL;
+  #if defined(HPCG_WITH_CUDA)
+  cusparseMatDescr_t descrL;
+  cusparseSolveAnalysisInfo_t infoL;
+  #endif
+  int *d_Lrow_ptr;
+  int *d_Lcol_idx;
+  SC  *d_Lnzvals;   //!< values of matrix entries
+  // to store the strictly upper-triangular matrix on device
+  local_int_t nnzU;
+  #if defined(HPCG_WITH_CUDA)
+  cusparseMatDescr_t descrU;
+  #endif
+  int *d_Urow_ptr;
+  int *d_Ucol_idx;
+  SC  *d_Unzvals;   //!< values of matrix entries
+
+  // TODO: remove
+  Vector<SC> x; // nrow
+  Vector<SC> y; // ncol
+#endif
 };
 
 /*!
@@ -89,9 +130,11 @@ inline void InitializeSparseMatrix(SparseMatrix_type & A, Geometry * geom) {
   A.geom = geom;
   A.totalNumberOfRows = 0;
   A.totalNumberOfNonzeros = 0;
+  A.totalNumberOfMGNonzeros = 0;
   A.localNumberOfRows = 0;
   A.localNumberOfColumns = 0;
   A.localNumberOfNonzeros = 0;
+  A.localNumberOfMGNonzeros = 0;
   A.nonzerosInRow = 0;
   A.mtxIndG = 0;
   A.mtxIndL = 0;
@@ -102,8 +145,9 @@ inline void InitializeSparseMatrix(SparseMatrix_type & A, Geometry * geom) {
   // functions that are meant to be optimized.
   A.isDotProductOptimized = true;
   A.isSpmvOptimized       = true;
-  A.isMgOptimized      = true;
+  A.isMgOptimized         = true;
   A.isWaxpbyOptimized     = true;
+  A.isGemvOptimized       = true;
 
 #ifndef HPCG_NO_MPI
   A.numberOfExternalValues = 0;
@@ -169,24 +213,61 @@ inline void DeleteMatrix(SparseMatrix_type & A) {
   delete [] A.mtxIndG[0];
   delete [] A.mtxIndL[0];
 #endif
-  if (A.title)                  delete [] A.title;
-  if (A.nonzerosInRow)             delete [] A.nonzerosInRow;
-  if (A.mtxIndG) delete [] A.mtxIndG;
-  if (A.mtxIndL) delete [] A.mtxIndL;
-  if (A.matrixValues) delete [] A.matrixValues;
-  if (A.matrixDiagonal)           delete [] A.matrixDiagonal;
+  if (A.title)                 delete [] A.title;
+  if (A.nonzerosInRow)         delete [] A.nonzerosInRow;
+  if (A.mtxIndG)               delete [] A.mtxIndG;
+  if (A.mtxIndL)               delete [] A.mtxIndL;
+  if (A.matrixValues)          delete [] A.matrixValues;
+  if (A.matrixDiagonal)        delete [] A.matrixDiagonal;
 
 #ifndef HPCG_NO_MPI
-  if (A.elementsToSend)       delete [] A.elementsToSend;
-  if (A.neighbors)              delete [] A.neighbors;
-  if (A.receiveLength)            delete [] A.receiveLength;
+  if (A.elementsToSend)        delete [] A.elementsToSend;
+  if (A.neighbors)             delete [] A.neighbors;
+  if (A.receiveLength)         delete [] A.receiveLength;
   if (A.sendLength)            delete [] A.sendLength;
   if (A.sendBuffer)            delete [] A.sendBuffer;
 #endif
 
-  if (A.geom!=0) { DeleteGeometry(*A.geom); delete A.geom; A.geom = 0;}
-  if (A.Ac!=0) { DeleteMatrix(*A.Ac); delete A.Ac; A.Ac = 0;} // Delete coarse matrix
-  if (A.mgData!=0) { DeleteMGData(*A.mgData); delete A.mgData; A.mgData = 0;} // Delete MG data
+  if (A.geom!=0) {
+    DeleteGeometry(*A.geom);
+    delete A.geom;
+    A.geom = 0;
+  }
+  if (A.Ac!=0) {
+    // Delete coarse matrix
+    DeleteMatrix(*A.Ac);
+    delete A.Ac; 
+    A.Ac = 0;
+  }
+  if (A.mgData!=0) {
+    // Delete MG data
+    DeleteMGData(*A.mgData);
+    delete A.mgData;
+    A.mgData = 0;
+  }
+
+#ifdef HPCG_WITH_CUDA
+  cudaFree (A.d_row_ptr);
+  cudaFree (A.d_col_idx);
+  cudaFree (A.d_nzvals);
+
+  cudaFree (A.d_Lrow_ptr);
+  cudaFree (A.d_Lcol_idx);
+  cudaFree (A.d_Lnzvals);
+
+  cudaFree (A.d_Urow_ptr);
+  cudaFree (A.d_Ucol_idx);
+  cudaFree (A.d_Unzvals);
+
+  DeleteVector (A.x);
+  DeleteVector (A.y);
+
+  cusparseDestroy(A.cusparseHandle);
+  cusparseDestroyMatDescr(A.descrA);
+  cusparseDestroyMatDescr(A.descrL);
+  cusparseDestroyMatDescr(A.descrU);
+  cusparseDestroySolveAnalysisInfo(A.infoL);
+#endif
   return;
 }
 

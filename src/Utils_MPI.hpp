@@ -4,6 +4,8 @@
 #ifndef HPGMP_UTILS_MPI_HPP
 #define HPGMP_UTILS_MPI_HPP
 
+#include <mpi.h>
+
 // MpiTypeTraits (from Teuchos)
 template<class T>
 class MpiTypeTraits {

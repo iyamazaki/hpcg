@@ -29,7 +29,7 @@
 
 #ifdef HPCG_DETAILED_DEBUG
 #include <fstream>
-#include "hpgmp.hpp"
+#include "Hpgmp_Params.hpp"
 #endif
 
 #include <cmath>  // needed for fabs

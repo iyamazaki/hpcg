@@ -23,7 +23,7 @@
 #include <mpi.h>
 #endif
 
-#include "hpgmp.hpp"
+#include "Hpgmp_Params.hpp"
 
 #include "CheckAspectRatio.hpp"
 

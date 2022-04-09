@@ -31,7 +31,7 @@
 #include <fstream>
 using std::endl;
 
-#include "hpgmp.hpp"
+#include "Hpgmp_Params.hpp"
 #endif
 
 /*!

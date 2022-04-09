@@ -21,7 +21,7 @@
 #ifndef TESTSYMMETRY_HPP
 #define TESTSYMMETRY_HPP
 
-#include "hpgmp.hpp"
+#include "Hpgmp_Params.hpp"
 #include "SparseMatrix.hpp"
 #include "CGData.hpp"
 

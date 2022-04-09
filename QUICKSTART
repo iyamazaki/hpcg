@@ -37,6 +37,11 @@ NOTE: The instructions in this file assume you are working with a version
       export OMP_NUM_THREADS 4
       mpiexec -np 64 ./xhpcg
 
+5) To set parameters, hpcg.dat ... First two lines ignored. 
+    Line 3: nx ny nz
+    Line 4: Time to run the bechmark (seconds)
+    Line 5: 
+
 5) The benchmark has completed execution. This should take a few minutes
    when running in evaluation mode, and take about 30 minutes in official
    benchmark mode. If you are running on a production system, you may be able

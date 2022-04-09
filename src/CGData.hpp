@@ -63,6 +63,7 @@ inline void DeleteCGData(CGData_type & data) {
   DeleteVector (data.r);
   DeleteVector (data.z);
   DeleteVector (data.p);
+  DeleteVector (data.w);
   DeleteVector (data.Ap);
   return;
 }

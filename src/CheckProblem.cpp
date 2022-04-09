@@ -29,7 +29,7 @@
 #if defined(HPCG_DEBUG) || defined(HPCG_DETAILED_DEBUG)
 #include <fstream>
 using std::endl;
-#include "hpgmp.hpp"
+#include "Hpgmp_Params.hpp"
 #endif
 #include <cassert>
 

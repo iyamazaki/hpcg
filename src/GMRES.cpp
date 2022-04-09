@@ -15,14 +15,14 @@
 /*!
  @file GMRES.cpp
 
- HPCG routine
+ GMRES routine
  */
 
 #include <fstream>
 
 #include <cmath>
 
-#include "hpgmp.hpp"
+#include "Hpgmp_Params.hpp"
 
 #include "GMRES.hpp"
 #include "mytimer.hpp"
@@ -32,6 +32,7 @@
 #include "ComputeWAXPBY.hpp"
 #include "ComputeTRSM.hpp"
 #include "ComputeGEMV.hpp"
+#include "ComputeGEMVT.hpp"
 
 
 // Use TICK and TOCK to time a code section in MATLAB-like fashion
@@ -56,14 +57,14 @@
 
   @return Returns zero on success and a non-zero value otherwise.
 
-  @see CG_ref()
+  @see GMRES_ref()
 */
 template<class SparseMatrix_type, class CGData_type, class Vector_type>
 int GMRES(const SparseMatrix_type & A, CGData_type & data, const Vector_type & b, Vector_type & x,
           const int restart_length, const int max_iter, const typename SparseMatrix_type::scalar_type tolerance,
           int & niters, typename SparseMatrix_type::scalar_type & normr,  typename SparseMatrix_type::scalar_type & normr0,
-          double * times, bool doPreconditioning) {
-
+          double * times, double * flops, bool doPreconditioning) {
+ 
   typedef typename SparseMatrix_type::scalar_type scalar_type;
   typedef MultiVector<scalar_type> MultiVector_type;
   typedef SerialDenseMatrix<scalar_type> SerialDenseMatrix_type;
@@ -71,7 +72,7 @@ int GMRES(const SparseMatrix_type & A, CGData_type & data, const Vector_type & b
   const scalar_type one  (1.0);
   const scalar_type zero (0.0);
   double t_begin = mytimer();  // Start timing right away
-  double t0 = 0.0, t1 = 0.0, t2 = 0.0, t3 = 0.0, t4 = 0.0, t5 = 0.0;
+  double t0 = 0.0, t1 = 0.0, t2 = 0.0, t3 = 0.0, t4 = 0.0, t5 = 0.0, t6 = 0.0;
 
   normr = 0.0;
   scalar_type rtz = zero, oldrtz = zero, alpha = zero, beta = zero, pAp = zero;
@@ -80,20 +81,24 @@ int GMRES(const SparseMatrix_type & A, CGData_type & data, const Vector_type & b
 //  double t6 = 0.0;
 //#endif
   local_int_t nrow = A.localNumberOfRows;
+  local_int_t Nrow = A.totalNumberOfRows;
   Vector_type & r = data.r; // Residual vector
   Vector_type & z = data.z; // Preconditioned residual vector
   Vector_type & p = data.p; // Direction vector (in MPI mode ncol>=nrow)
   Vector_type & Ap = data.Ap;
 
   SerialDenseMatrix_type H;
+  SerialDenseMatrix_type h;
+  SerialDenseMatrix_type t;
   SerialDenseMatrix_type cs;
   SerialDenseMatrix_type ss;
-  SerialDenseMatrix_type t;
   MultiVector_type Q;
+  MultiVector_type P;
   Vector_type Qkm1;
   Vector_type Qk;
   Vector_type Qj;
   InitializeMatrix(H,  restart_length+1, restart_length);
+  InitializeMatrix(h,  restart_length+1, 1);
   InitializeMatrix(t,  restart_length+1, 1);
   InitializeMatrix(cs, restart_length+1, 1);
   InitializeMatrix(ss, restart_length+1, 1);
@@ -101,47 +106,47 @@ int GMRES(const SparseMatrix_type & A, CGData_type & data, const Vector_type & b
 
   if (!doPreconditioning && A.geom->rank==0) HPCG_fout << "WARNING: PERFORMING UNPRECONDITIONED ITERATIONS" << std::endl;
 
-#ifdef HPCG_DEBUG
+  bool verbose = true;
   int print_freq = 1;
-  if (print_freq>50) print_freq=50;
-  if (print_freq<1)  print_freq=1;
-  if (A.geom->rank==0) HPCG_fout << std::endl << " Running GMRES(" << restart_length
-                                 << ") with max-iters = " << max_iter
-                                 << " and tol = " << tolerance
-                                 << (doPreconditioning ? " with precond " : " without precond ")
-                                 << ", nrow = " << nrow << std::endl;
-#endif
+  if (verbose && A.geom->rank==0) {
+    HPCG_fout << std::endl << " Running GMRES(" << restart_length
+                           << ") with max-iters = " << max_iter
+                           << " and tol = " << tolerance
+                           << (doPreconditioning ? " with precond " : " without precond ")
+                           << ", nrow = " << nrow 
+                           << " on ( " << A.geom->npx << " x " << A.geom->npy << " x " << A.geom->npz
+                           << " ) MPI grid "
+                           << std::endl;
+  }
+  *flops = 0.0;
+  double flops_gmg  = 0.0;
+  double flops_spmv = 0.0;
+  double flops_orth = 0.0;
+  global_int_t numSpMVs_MG = 1+(A.mgData->numberOfPresmootherSteps + A.mgData->numberOfPostsmootherSteps);
   niters = 0;
   bool converged = false;
   while (niters <= max_iter && !converged) {
     // p is of length ncols, copy x to p for sparse MV operation
     CopyVector(x, p);
-    TICK(); ComputeSPMV(A, p, Ap); TOCK(t3); // Ap = A*p
-    TICK(); ComputeWAXPBY(nrow, one, b, -one, Ap, r, A.isWaxpbyOptimized);  TOCK(t2); // r = b - Ax (x stored in p)
-    TICK(); ComputeDotProduct(nrow, r, r, normr, t4, A.isDotProductOptimized); TOCK(t1);
+    TICK(); ComputeSPMV(A, p, Ap); TOCK(t3); flops_spmv += (2*A.totalNumberOfNonzeros); // Ap = A*p
+    TICK(); ComputeWAXPBY(nrow, one, b, -one, Ap, r, A.isWaxpbyOptimized); TOCK(t2); *flops += (2*Nrow); // r = b - Ax (x stored in p)
+    TICK(); ComputeDotProduct(nrow, r, r, normr, t4, A.isDotProductOptimized); *flops += (2*Nrow); TOCK(t1);
     normr = sqrt(normr);
     GetVector(Q, 0, Qj);
     CopyVector(r, Qj);
-    TICK(); ComputeWAXPBY(nrow, zero, Qj, one/normr, Qj, Qj, A.isWaxpbyOptimized); TOCK(t2);
+    //TICK(); ComputeWAXPBY(nrow, zero, Qj, one/normr, Qj, Qj, A.isWaxpbyOptimized); TOCK(t2);
+    TICK(); ScaleVectorValue(Qj, one/normr); TOCK(t2); *flops += Nrow;
 
     // Record initial residual for convergence testing
     if (niters == 0) normr0 = normr;
-    #ifdef HPCG_DEBUG
-    if (A.geom->rank==0) HPCG_fout << "GMRES Residual at the start of restart cycle = "<< normr
-                                   << ", " << normr/normr0 << std::endl;
-    #endif
-
+    if (verbose && A.geom->rank==0) {
+      HPCG_fout << "GMRES Residual at the start of restart cycle = "<< normr
+                << ", " << normr/normr0 << std::endl;
+    }
     if (normr/normr0 <= tolerance) {
       converged = true;
-      #ifdef HPCG_DEBUG
-      if (A.geom->rank==0) HPCG_fout << " > GMRES converged " << std::endl;
-      #endif
+      if (verbose && A.geom->rank==0) HPCG_fout << " > GMRES converged " << std::endl;
     }
-/*if (normr/normr0 <= tolerance || (niters > 0 && doPreconditioning)) {
-  printf( " done %d iters (%s)\n",niters, (converged ? "Converged" : "Not Converged") );
-  printf( " done (%s)\n",(doPreconditioning ? "Precond" : "Not Precond") );
-  for (int i = 0; i < nrow; i++) printf( "x[%d] = %e\n",i,x.values[i] );
-}*/
 
     // do forward GS instead of symmetric GS
     bool symmetric = false;
@@ -154,37 +159,61 @@ int GMRES(const SparseMatrix_type & A, CGData_type & data, const Vector_type & b
       GetVector(Q, k,   Qk);
 
       TICK();
-      if (doPreconditioning)
-        ComputeMG(A, Qkm1, z, symmetric); // Apply preconditioner
-      else
+      if (doPreconditioning) {
+        ComputeMG(A, Qkm1, z, symmetric); flops_gmg += (2*numSpMVs_MG*A.totalNumberOfMGNonzeros); // Apply preconditioner
+      } else {
         CopyVector(Qkm1, z);              // copy r to z (no preconditioning)
+      }
       TOCK(t5); // Preconditioner apply time
 
       // Qk = A*z
-      TICK(); ComputeSPMV(A, z, Qk); TOCK(t3);
+      TICK(); ComputeSPMV(A, z, Qk); flops_spmv += (2*A.totalNumberOfNonzeros); TOCK(t3);
 
-      // MGS to orthogonalize z against Q(:,0:k-1), using dots
-      for (int j = 0; j < k; j++) {
-        // get j-th column of Q
-        GetVector(Q, j, Qj);
 
-        alpha = zero;
-        for (int i = 0; i < 2; i++) {
-          // beta = Qk'*Qj
-          TICK(); ComputeDotProduct(nrow, Qk, Qj, beta, t4, A.isDotProductOptimized); TOCK(t1);
+      // orthogonalize z against Q(:,0:k-1), using dots
+      bool use_mgs = false;
+      TICK();
+      if (use_mgs) {
+        // MGS2
+        for (int j = 0; j < k; j++) {
+          // get j-th column of Q
+          GetVector(Q, j, Qj);
 
-          // Qk = Qk - beta * Qj
-          TICK(); ComputeWAXPBY(nrow, one, Qk, -beta, Qj, Qk, A.isWaxpbyOptimized); TOCK(t2);
-          alpha += beta;
+          alpha = zero;
+          for (int i = 0; i < 2; i++) {
+            // beta = Qk'*Qj
+            TICK(); ComputeDotProduct(nrow, Qk, Qj, beta, t4, A.isDotProductOptimized); TOCK(t1);
+
+            // Qk = Qk - beta * Qj
+            TICK(); ComputeWAXPBY(nrow, one, Qk, -beta, Qj, Qk, A.isWaxpbyOptimized); TOCK(t2);
+            alpha += beta;
+          }
+          SetMatrixValue(H, j, k-1, alpha);
         }
-        SetMatrixValue(H, j, k-1, alpha);
+      } else {
+        // CGS2
+        GetMultiVector(Q, 0, k-1, P);
+        ComputeGEMVT (nrow, k,  one, P, Qk, zero, h, A.isGemvOptimized); // h = Q(1:k)'*q(k+1)
+        ComputeGEMV  (nrow, k, -one, P, h,  one, Qk, A.isGemvOptimized); // h = Q(1:k)'*q(k+1)
+        for(int i = 0; i < k; i++) {
+          SetMatrixValue(H, i, k-1, h.values[i]);
+        }
+        // reorthogonalize
+        ComputeGEMVT (nrow, k,  one, P, Qk, zero, h, A.isGemvOptimized); // h = Q(1:k)'*q(k+1)
+        ComputeGEMV  (nrow, k, -one, P, h,  one, Qk, A.isGemvOptimized); // h = Q(1:k)'*q(k+1)
+        for(int i = 0; i < k; i++) {
+          AddMatrixValue(H, i, k-1, h.values[i]);
+        }
       }
+      TOCK(t6); // Ortho time
+      flops_orth += (2*k*Nrow);
       // beta = norm(Qk)
-      TICK(); ComputeDotProduct(nrow, Qk, Qk, beta, t4, A.isDotProductOptimized); TOCK(t1);
+      TICK(); ComputeDotProduct(nrow, Qk, Qk, beta, t4, A.isDotProductOptimized); *flops += (2*Nrow); TOCK(t1);
       beta = sqrt(beta);
 
       // Qk = Qk / beta
-      TICK(); ComputeWAXPBY(nrow, zero, Qk, one/beta, Qk, Qk, A.isWaxpbyOptimized); TOCK(t2);
+      //TICK(); ComputeWAXPBY(nrow, zero, Qk, one/beta, Qk, Qk, A.isWaxpbyOptimized); TOCK(t2);
+      TICK(); ScaleVectorValue(Qk, one/beta); *flops += Nrow; TOCK(t2);
       SetMatrixValue(H, k, k-1, beta);
 
       // Given's rotation
@@ -220,49 +249,27 @@ int GMRES(const SparseMatrix_type & A, CGData_type & data, const Vector_type & b
       SetMatrixValue(cs, k-1, 0, cj);
 
       normr = std::abs(v2);
-      #ifdef HPCG_DEBUG
-        if (A.geom->rank==0 && (k%print_freq == 0 || k+1 == restart_length))
-          HPCG_fout << "GMRES Iteration = "<< k << " (" << niters << ")   Scaled Residual = "
-                    << normr << " / " << normr0 << " = " << normr/normr0 << std::endl;
-      #endif
+      if (verbose && A.geom->rank==0 && (k%print_freq == 0 || k+1 == restart_length)) {
+        HPCG_fout << "GMRES Iteration = "<< k << " (" << niters << ")   Scaled Residual = "
+                  << normr << " / " << normr0 << " = " << normr/normr0 << std::endl;
+      }
       niters ++;
       k ++;
     } // end of restart-cycle
     // prepare to restart
-    #ifdef HPCG_DEBUG
-      if (A.geom->rank==0)
-        HPCG_fout << "GMRES restart: k = "<< k << " (" << niters << ")" << std::endl;
-    #endif
-    // > update x
-/*if (A.geom->rank==0) {
-  printf( "\n k = %d\n",k );
-  printf( "R=[\n" );
-  for (int i = 0; i < k; i++) {
-    for (int j = 0; j < k; j++) printf("%e ",H.values[i + j * H.m] );
-    printf("\n");
-  }
-  printf("];\n\n");
-  printf( "t=[\n" );
-  for (int i = 0; i < k; i++) printf( "%e\n",t.values[i]);
-  printf("];\n\n");
-
-  if (niters == 1) {
-    printf( " nrow = %d, max_iter = %d\n",nrow,max_iter );
-    printf( " Q = [\n" );
-    for (int i = 0; i < nrow; i++) {
-      for (int j = 0; j <= k-1; j++) printf( "%e ",Q.values[i + j * nrow] );
-      printf("\n");
+    if (verbose && A.geom->rank==0) {
+      HPCG_fout << "GMRES restart: k = "<< k << " (" << niters << ")" << std::endl;
     }
-    printf( " ];\n\n" );
-  }
-}*/
+    // > update x
     ComputeTRSM(k-1, one, H, t);
     if (doPreconditioning) {
-      ComputeGEMV (nrow, k-1, one, Q, t, zero, r); // r = Q*t
-      ComputeMG(A, r, z, symmetric);               // z = M*r
-      TICK(); ComputeWAXPBY(nrow, one, x, one, z, x, A.isWaxpbyOptimized); TOCK(t2); // x += z
+      ComputeGEMV(nrow, k-1, one, Q, t, zero, r, A.isGemvOptimized); *flops += (2*Nrow*(k-1)); // r = Q*t
+      TICK();
+      ComputeMG(A, r, z, symmetric); flops_gmg += (2*numSpMVs_MG*A.totalNumberOfMGNonzeros);      // z = M*r
+      TOCK(t5); // Preconditioner apply time
+      TICK(); ComputeWAXPBY(nrow, one, x, one, z, x, A.isWaxpbyOptimized); TOCK(t2); *flops += (2*Nrow); // x += z
     } else {
-      ComputeGEMV (nrow, k-1, one, Q, t, one, x); // x += Q*t
+      ComputeGEMV (nrow, k-1, one, Q, t, one, x, A.isGemvOptimized); *flops += (2*Nrow*(k-1)); // x += Q*t
     }
   } // end of outer-loop
 
@@ -277,6 +284,28 @@ int GMRES(const SparseMatrix_type & A, CGData_type & data, const Vector_type & b
 //  times[6] += t6; // exchange halo time
 //#endif
   times[0] += mytimer() - t_begin;  // Total time. All done...
+  if (verbose && A.geom->rank==0) {
+    HPCG_fout << " > nnz(A)  : " << A.totalNumberOfNonzeros << std::endl;
+    HPCG_fout << " > nnz(MG) : " << A.totalNumberOfMGNonzeros << " (" << numSpMVs_MG << ")" << std::endl;
+    HPCG_fout << " > SpMV : " << (flops_spmv / 1000000000.0) << " / " << t3 << " = "
+                              << (flops_spmv / 1000000000.0) / t3 << " Gflop/s" << std::endl;
+    HPCG_fout << " > GMG  : " << (flops_gmg  / 1000000000.0) << " / " << t5 << " = "
+                              << (flops_gmg  / 1000000000.0) / t5 << " Gflop/s" << std::endl;
+    HPCG_fout << " > Orth : " << (flops_orth / 1000000000.0) << " / " << t6 << " = "
+                              << (flops_orth / 1000000000.0) / t6 << " Gflop/s" << std::endl;
+    HPCG_fout << std::endl;
+  }
+  *flops += flops_gmg;
+  *flops += flops_spmv;
+  *flops += flops_orth;
+
+  DeleteDenseMatrix(H);
+  DeleteDenseMatrix(h);
+  DeleteDenseMatrix(t);
+  DeleteDenseMatrix(cs);
+  DeleteDenseMatrix(ss);
+  DeleteMultiVector(Q);
+
   return 0;
 }
 
@@ -288,9 +317,9 @@ int GMRES(const SparseMatrix_type & A, CGData_type & data, const Vector_type & b
 template
 int GMRES< SparseMatrix<double>, CGData<double>, Vector<double> >
   (SparseMatrix<double> const&, CGData<double>&, Vector<double> const&, Vector<double>&,
-   const int, const int, double, int&, double&, double&, double*, bool);
+   const int, const int, double, int&, double&, double&, double*, double*, bool);
 
 template
 int GMRES< SparseMatrix<float>, CGData<float>, Vector<float> >
   (SparseMatrix<float> const&, CGData<float>&, Vector<float> const&, Vector<float>&,
-   const int, const int, float, int&, float&, float&, double*, bool);
+   const int, const int, float, int&, float&, float&, double*, double*, bool);

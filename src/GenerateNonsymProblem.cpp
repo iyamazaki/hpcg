@@ -49,8 +49,11 @@ void GenerateNonsymProblem(SparseMatrix_type & A, Vector_type * b, Vector_type *
   // Furthermore, any code must work for general unstructured sparse matrices.  Special knowledge about the
   // specific nature of the sparsity pattern may not be explicitly used.
 
-  return(GenerateNonsymProblem_v1_ref(A, b, x, xexact, init_vect));
-  //return(GenerateNonsymProblem_ref(A, b, x, xexact, init_vect));
+  #if 1
+  return GenerateNonsymProblem_v1_ref(A, b, x, xexact, init_vect);
+  #else
+  return GenerateNonsymProblem_ref(A, b, x, xexact, init_vect);
+  #endif
 }
 
 

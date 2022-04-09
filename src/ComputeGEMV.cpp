@@ -19,44 +19,17 @@
  */
 
 #include "ComputeGEMV.hpp"
+#include "ComputeGEMV_ref.hpp"
 
 template<class MultiVector_type, class Vector_type, class SerialDenseMatrix_type>
 int ComputeGEMV(const local_int_t m, const local_int_t n,
                 const typename MultiVector_type::scalar_type alpha, const MultiVector_type & A, const SerialDenseMatrix_type & x,
-                const typename      Vector_type::scalar_type beta,  const Vector_type & y) {
+                const typename      Vector_type::scalar_type beta,  const Vector_type & y,
+                bool & isOptimized) {
 
-  typedef typename       MultiVector_type::scalar_type scalarA_type;
-  typedef typename SerialDenseMatrix_type::scalar_type scalarX_type;
-  typedef typename            Vector_type::scalar_type scalarY_type;
-
-  const scalarA_type one  (1.0);
-  const scalarA_type zero (0.0);
-
-  assert(x.m >= n); // Test vector lengths
-  assert(x.n == 1);
-  assert(y.localLength >= m);
-
-  const scalarA_type * const Av = A.values;
-  const scalarX_type * const xv = x.values;
-        scalarY_type * yv = y.values;
-  if (beta == zero) {
-    for (local_int_t i = 0; i < m; i++) yv[i] = zero;
-  } else if (beta != one) {
-    for (local_int_t i = 0; i < m; i++) yv[i] *= beta;
-  }
-
-  if (alpha == one) {
-    for (local_int_t i=0; i<m; i++) {
-      for (local_int_t j=0; j<n; j++)
-        yv[i] += Av[i + j*m] * xv[j];
-    }
-  } else {
-    for (local_int_t i=0; i<m; i++) {
-      for (local_int_t j=0; j<n; j++)
-        yv[i] += alpha * Av[i + j*m] * xv[j];
-    }
-  }
-  return 0;
+  // This line and the next two lines should be removed and your version of ComputeGEMV should be used.
+  isOptimized = false;
+  return ComputeGEMV_ref(m, n, alpha, A, x, beta, y);
 }
 
 
@@ -67,15 +40,15 @@ int ComputeGEMV(const local_int_t m, const local_int_t n,
 // uniform
 template
 int ComputeGEMV< MultiVector<double>, Vector<double>, SerialDenseMatrix<double> >
-  (int, int, double, MultiVector<double> const&, SerialDenseMatrix<double> const&, double, Vector<double> const&);
+  (int, int, double, MultiVector<double> const&, SerialDenseMatrix<double> const&, double, Vector<double> const&, bool&);
 
 template
 int ComputeGEMV< MultiVector<float>, Vector<float>, SerialDenseMatrix<float> >
-  (int, int, float, MultiVector<float> const&, SerialDenseMatrix<float> const&, float, Vector<float> const&);
+  (int, int, float, MultiVector<float> const&, SerialDenseMatrix<float> const&, float, Vector<float> const&, bool&);
 
 
 // mixed
 template
 int ComputeGEMV< MultiVector<float>, Vector<double>, SerialDenseMatrix<float> >
-  (int, int, float, MultiVector<float> const&, SerialDenseMatrix<float> const&, double, Vector<double> const&);
+  (int, int, float, MultiVector<float> const&, SerialDenseMatrix<float> const&, double, Vector<double> const&, bool&);
 

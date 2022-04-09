@@ -40,9 +40,14 @@ void SetupProblem(int numberOfMgLevels, SparseMatrix_type & A, Geometry * geom, 
   GenerateNonsymProblem(A, b, x, xexact, init_vect);
   SetupHalo(A); //TODO: This is currently called in main... Should it really be called in both places?  Which one? 
 
+  A.localNumberOfMGNonzeros = A.localNumberOfNonzeros;
+  A.totalNumberOfMGNonzeros = A.totalNumberOfNonzeros;
+
   SparseMatrix_type * curLevelMatrix = &A;
   for (int level = 1; level< numberOfMgLevels; ++level) {
     GenerateNonsymCoarseProblem(*curLevelMatrix);
+    A.localNumberOfMGNonzeros += curLevelMatrix->Ac->localNumberOfNonzeros;
+    A.totalNumberOfMGNonzeros += curLevelMatrix->Ac->totalNumberOfNonzeros;
     curLevelMatrix = curLevelMatrix->Ac; // Make the just-constructed coarse grid the next level
   }
 

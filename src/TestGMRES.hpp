@@ -21,7 +21,7 @@
 #ifndef TESTGMRES_HPP
 #define TESTGMRES_HPP
 
-#include "hpgmp.hpp"
+#include "Hpgmp_Params.hpp"
 #include "SparseMatrix.hpp"
 #include "Vector.hpp"
 #include "CGData.hpp"
@@ -39,10 +39,12 @@ public:
 };
 
 template<class SparseMatrix_type, class SparseMatrix_type2, class CGData_type, class CGData_type2, class Vector_type, class TestCGData_type>
-extern int TestGMRES(SparseMatrix_type & A, SparseMatrix_type2 & A_lo, CGData_type & data, CGData_type2 & data_lo, Vector_type & b, Vector_type & x, TestCGData_type & testcg_data);
+extern int TestGMRES(SparseMatrix_type & A, SparseMatrix_type2 & A_lo, CGData_type & data, CGData_type2 & data_lo, Vector_type & b, Vector_type & x, TestCGData_type & testcg_data,
+                     bool test_diagonal_exaggeration, bool test_noprecond);
 
 template<class SparseMatrix_type, class CGData_type, class Vector_type, class TestCGData_type>
-extern int TestGMRES(SparseMatrix_type & A, CGData_type & data, Vector_type & b, Vector_type & x, TestCGData_type & testcg_data);
+extern int TestGMRES(SparseMatrix_type & A, CGData_type & data, Vector_type & b, Vector_type & x, TestCGData_type & testcg_data,
+                     bool test_diagonal_exaggeration, bool test_noprecond);
 
 #endif  // TESTGMRES_HPP
 
